@@ -1,0 +1,30 @@
+{
+	"posts": [
+		{
+			"id": "1",
+			"title": "Ouverture de mon blog",
+			"description": "Et voilà, j'ouvre enfin mon blog !",
+			"content": "Et voilà, j'ouvre enfin mon blog ! Sur de nombreuses demandes, je partagerai ici des articles techniques sur la sécurité informatique.",
+			"date": "3 juillet 2019",
+			"author": "zero",
+			"category": "Sécurité", 
+			"comments": [
+				{
+					"author": "zero", 
+					"date": "5 juillet 2019", 
+					"content": "Je me rends compte que de plus en plus de personnes essayent de pwn mon site et mon serveur, je ferme temporairement les commentaires le temps de régler ça !"
+				}
+			]
+		},
+		{
+			"id": "2",
+			"title": "WAF ajouté et réouverture des commentaires",
+			"description": "Comme dit dans les commentaires, plusieurs personnes ont essayé de chercher des failles dans ce blog. Pour m'assurer que je les détecte, j'ai codé mon propre mécanisme de détection générique d'attaques.",
+			"content": "Comme dit dans les commentaires, plusieurs personnes ont essayés de chercher des failles dans ce blog. Pour m'assurer que je les détecte, j'ai codé mon propre mécanisme de détection générique d'attaques. Le principe est le suivant : pour tout input envoyé par un utilisateur, je l'évalue afin de vérifier que le résultat est de la même taille. S'il ne l'est pas, c'est qu'il s'agit d'une commande interprétable, et qu'on tente d'attaquer ce blog. <br /><br />TOUTE TENTATIVE D'ATTAQUE SERA REPORTEE A L'HEBERGEUR<br /><br />Les commentaires sont de nouveau ouverts !",
+			"date": "6 juillet 2019",
+			"author": "zero",
+			"category": "Securité", 
+			"comments": []
+		}
+	]
+}

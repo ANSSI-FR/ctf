@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  # PHP Apache
+  php-apache:
+    build: php-apache
+    ports:
+      - "8001:80"
+    depends_on:
+      - mariadb
+
+  # Mariadb
+  mariadb:
+    build: mariadb
+    environment:
+      MYSQL_USER: root
+      MYSQL_ROOT_PASSWORD: DFsMBWcgeLuDP2bLEzbW
+    command: mysqld --connect_timeout=30 --net_read_timeout=3600 --max_allowed_packet=128M --max_connections=1024

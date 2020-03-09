@@ -1,0 +1,43 @@
+{% extends 'master.html' %}
+
+{% block body %}
+      <div class="blog-post">
+        <h2 class="blog-post-title">{{ POST.title }}</h2>
+        <p class="blog-post-meta">Ajouter commentaire</p>
+
+        <form method="POST" action="{{ url_for('comment', post_id=post_id) }}">
+	  	<div class"form-group">
+	    	{{ form.nickname.label }}: {{ form.nickname(class_="form-control") }}
+		</div>
+	    <div class"form-group">
+	    	{{ form.comment.label }}: {{ form.comment(class_="form-control") }}
+		</div>
+		<div class"form-group">
+	    	{{ form.preview(class_="btn btn-primary") }}
+	   		{# form.post(class_="btn btn-primary", disabled=True) #}
+	   		 <input class="btn btn-primary" disabled="" id="post" name="post" 
+	   		 type="submit" value="Poster" data-toggle="tooltip" data-placement="bottom" title="Les commentaires sont temporairement désactivés.">
+		</div>
+		</form>
+      </div>
+
+{#<div class="container">
+  <h1 class="mt-5"</h1>
+	{% if preview_nick %}
+	<div class="container">
+		<h1 class="mt-5">Comment preview</h1>
+		<h2>Comment by: {{ preview_nick }}</h2>
+		<p>
+		{{ preview_comment }}
+		<p>
+	</div>
+	{% endif %}
+</div>#}
+
+{% endblock %}
+
+{% block script %}
+<script>
+$('#post').tooltip()
+</script>
+{% endblock %}

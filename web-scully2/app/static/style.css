@@ -1,0 +1,59 @@
+table, th, td {
+    border: 1px solid black;
+    border-collapse: collapse;
+}
+
+.button{
+    background-color: navy;
+    color: white;
+    border: none;
+    height: 25px;
+    width: 100px;
+    font-weight: bold;
+}
+
+#content{
+    margin: auto;
+    width: 1000px;
+    text-align: center;
+    border: 2px solid navy;
+    padding-bottom: 30px;
+}
+
+table{
+    margin-left: center;
+    margin-right: center;
+    width: 50%;
+}
+
+#navbar
+{
+  position: relative;
+}
+
+#navbar ul
+{
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: navy;
+    position: fixed;
+    top: 0;
+    width: 100%;
+}
+
+#navbar ul li
+{
+    float: left;
+}
+
+#navbar ul li a
+{
+    display: block;
+    color: white;
+    border-radius: 5px 5px;
+    text-align: center;
+    padding: 14px 16px;
+    text-decoration: none;
+}

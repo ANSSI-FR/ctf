@@ -1,0 +1,15 @@
+{% extends 'master.html' %}
+
+{% block body %}
+{% if error_code == 403 %}
+<div class="alert alert-danger">
+  <h1 class="alert-heading">Code 403</h4>
+  <p>{{ error_message }}</p>
+</div>
+{% else %}
+<div class="alert alert-warning">
+  <h1 class="alert-heading">Code {{ error_code }}</h4>
+  <p>{{ error_message }}</p>
+</div>
+{% endif %}
+{% endblock %}

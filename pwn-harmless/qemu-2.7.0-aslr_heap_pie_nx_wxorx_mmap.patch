@@ -1,0 +1,523 @@
+diff -Naur qemu-2.7.0.orig/cpu-exec.c qemu-2.7.0/cpu-exec.c
+--- qemu-2.7.0.orig/cpu-exec.c	2016-09-02 17:34:17.000000000 +0200
++++ qemu-2.7.0/cpu-exec.c	2017-01-19 09:34:00.817088525 +0100
+@@ -33,6 +33,9 @@
+ #include "hw/i386/apic.h"
+ #endif
+ #include "sysemu/replay.h"
++#include "syscall_defs.h"
++
++extern int do_nx;
+ 
+ /* -icount align implementation. */
+ 
+@@ -576,6 +579,38 @@
+     }
+ }
+ 
++int is_page_exec(target_ulong address)
++{
++    int ret = page_get_flags(address);
++    if (ret == 0)
++    {
++        // Special case like for ARM where PC gets set on vector addresses, not mapped under qemu
++        // http://code.metager.de/source/xref/lib/eglibc/libc/ports/sysdeps/unix/sysv/linux/arm/aeabi_read_tp.S
++        // We fake it being executable to let qemu handle the exception
++        return 1;
++    }
++    return ((ret & PAGE_EXEC) == PAGE_EXEC);
++}
++
++int check_nx(CPUArchState *env)
++{
++#if defined(TARGET_MIPS)
++    if (!is_page_exec(env->active_tc.PC))
++#elif defined(TARGET_ARM)
++    if (!is_page_exec(env->regs[15]))
++//  != PAGE_EXEC) && ((env->regs[15] & 0xffff0000 ) != 0xffff0000))
++#else
++//TODO implement other arches
++    if (false)
++#endif
++    {
++        target_siginfo_t info;
++        queue_signal(env, info.si_signo, &info);
++        return 1;
++    }
++    return 0;
++}
++
+ /* main execution loop */
+ 
+ int cpu_exec(CPUState *cpu)
+@@ -623,6 +658,13 @@
+                 cpu_handle_interrupt(cpu, &last_tb);
+                 tb = tb_find_fast(cpu, &last_tb, tb_exit);
+                 cpu_loop_exec_tb(cpu, tb, &last_tb, &tb_exit, &sc);
++                if(do_nx)
++                {
++                    if (check_nx(cpu->env_ptr))
++                    {
++                        return EXCP_INTERRUPT;
++                    }
++                }
+                 /* Try to align the host and virtual clocks
+                    if the guest is in advance */
+                 align_clocks(&sc, cpu);
+diff -Naur qemu-2.7.0.orig/include/exec/cpu-all.h qemu-2.7.0/include/exec/cpu-all.h
+--- qemu-2.7.0.orig/include/exec/cpu-all.h	2016-09-02 17:34:20.000000000 +0200
++++ qemu-2.7.0/include/exec/cpu-all.h	2017-01-16 20:01:20.395107430 +0100
+@@ -211,6 +211,8 @@
+ #define PAGE_EXEC      0x0004
+ #define PAGE_BITS      (PAGE_READ | PAGE_WRITE | PAGE_EXEC)
+ #define PAGE_VALID     0x0008
++#define PAGE_WWRITE    0x0200
++#define PAGE_WEXEC     0x0400
+ /* original state of the write flag (used when tracking self-modifying
+    code */
+ #define PAGE_WRITE_ORG 0x0010
+diff -Naur qemu-2.7.0.orig/linux-user/elfload.c qemu-2.7.0/linux-user/elfload.c
+--- qemu-2.7.0.orig/linux-user/elfload.c	2016-09-02 17:34:22.000000000 +0200
++++ qemu-2.7.0/linux-user/elfload.c	2017-01-17 00:07:17.371221207 +0100
+@@ -8,6 +8,9 @@
+ #include "disas/disas.h"
+ #include "qemu/path.h"
+ 
++int do_aslr = 1;
++int do_pie = 1;
++
+ #ifdef _ARCH_PPC64
+ #undef ARCH_DLINFO
+ #undef ELF_PLATFORM
+@@ -1435,8 +1438,32 @@
+         guard = qemu_real_host_page_size;
+     }
+ 
+-    error = target_mmap(0, size + guard, PROT_READ | PROT_WRITE,
++    if (do_aslr == 0)
++    {
++        error = target_mmap(0, size + guard, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++    }
++    else
++    {
++        int attempts;
++        int newarg1;
++        int fd = open("/dev/urandom", O_RDONLY);
++        read(fd, &newarg1, sizeof(newarg1));
++        close(fd);
++        srand(newarg1);
++
++        for(attempts = 0; attempts < 10; attempts++)
++        {
++           if(attempts < 9)
++               newarg1 = (rand() & 0x00fff000)|0xf2000000;
++           else
++               newarg1 = 0;
++           error = target_mmap(newarg1, size + guard, PROT_READ | PROT_WRITE,
++                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++           if((error > 0) || (error < -TARGET_ENOTRECOVERABLE))
++               break;
++        }
++    }
+     if (error == -1) {
+         perror("mmap stack");
+         exit(-1);
+@@ -1807,10 +1834,15 @@
+ {
+     struct elfhdr *ehdr = (struct elfhdr *)bprm_buf;
+     struct elf_phdr *phdr;
+-    abi_ulong load_addr, load_bias, loaddr, hiaddr, error;
++    abi_ulong load_addr, load_bias, loaddr, newloaddr, hiaddr, error;
+     int i, retval;
+     const char *errmsg;
+ 
++    i = open("/dev/urandom", O_RDONLY);
++    read(i, &retval, sizeof(retval));
++    close(i);
++    srand(retval);
++
+     /* First of all, some simple consistency checks */
+     errmsg = "Invalid ELF image for this architecture";
+     if (!elf_check_ident(ehdr)) {
+@@ -1858,7 +1890,8 @@
+     }
+ 
+     load_addr = loaddr;
+-    if (ehdr->e_type == ET_DYN) {
++
++    if ((ehdr->e_type == ET_DYN) && (do_pie == 0)) {
+         /* The image indicates that it can be loaded anywhere.  Find a
+            location that can hold the memory space required.  If the
+            image is pre-linked, LOADDR will be non-zero.  Since we do
+@@ -1870,6 +1903,33 @@
+         if (load_addr == -1) {
+             goto exit_perror;
+         }
++    }
++    else if ((ehdr->e_type == ET_DYN) && (do_pie == 1)) {
++
++#define load_attempts 10
++	for(i = 0; i < load_attempts; i++)
++	{
++		//try 9 times, otherwise select 0 as a last resort
++		if((loaddr == 0) && (i < (load_attempts-1)))
++			newloaddr = rand() & 0xfffff000;
++		else
++			newloaddr = loaddr;
++
++        	load_addr = target_mmap(newloaddr, hiaddr - loaddr, PROT_NONE,
++                	                MAP_PRIVATE | MAP_ANON | MAP_NORESERVE,
++                        	        -1, 0);
++        	if (load_addr == -1) {
++			if (loaddr != 0)
++				goto exit_perror;
++			else if (i >= load_attempts)
++			{
++				//we keep trying and failing
++				goto exit_perror;
++			}
++		}
++		else
++			break;
++        }
+     } else if (pinterp_name != NULL) {
+         /* This is the main executable.  Make sure that the low
+            address does not conflict with MMAP_MIN_ADDR or the
+@@ -1906,7 +1966,7 @@
+     info->end_code = 0;
+     info->start_data = -1;
+     info->end_data = 0;
+-    info->brk = 0;
++    info->brk = rand() & 0x7ffff000;
+     info->elf_flags = ehdr->e_flags;
+ 
+     for (i = 0; i < ehdr->e_phnum; i++) {
+diff -Naur qemu-2.7.0.orig/linux-user/main.c qemu-2.7.0/linux-user/main.c
+--- qemu-2.7.0.orig/linux-user/main.c	2016-09-02 17:34:22.000000000 +0200
++++ qemu-2.7.0/linux-user/main.c	2017-01-16 20:01:20.396107430 +0100
+@@ -48,6 +48,7 @@
+ unsigned long mmap_min_addr;
+ unsigned long guest_base;
+ int have_guest_base;
++int do_nx = 0;
+ 
+ #define EXCP_DUMP(env, fmt, ...)                                        \
+ do {                                                                    \
+@@ -4011,6 +4012,31 @@
+     trace_file = trace_opt_parse(arg);
+ }
+ 
++static void handle_arg_nx(const char *arg)
++{
++    do_nx = 1;
++}
++
++static void handle_arg_mmap(const char *arg)
++{
++    do_mmap = 1;
++}
++
++static void handle_arg_nopie(const char *arg)
++{
++    do_pie = 0;
++}
++
++static void handle_arg_noaslr(const char *arg)
++{
++    do_aslr = 0;
++}
++
++static void handle_arg_wxorx(const char *arg)
++{
++    do_wxorx = 1;
++}
++
+ struct qemu_argument {
+     const char *argv;
+     const char *env;
+@@ -4062,6 +4088,16 @@
+      "",           "[[enable=]<pattern>][,events=<file>][,file=<file>]"},
+     {"version",    "QEMU_VERSION",     false, handle_arg_version,
+      "",           "display version information and exit"},
++    {"mmap",       "QEMU_MMAP",        false, handle_arg_mmap,
++     "",           "show mmap allocations"},
++    {"nx",         "QEMU_NX",          false, handle_arg_nx,
++     "",           "enable NX implementation"},
++    {"nopie",      "QEMU_NOPIE",       false, handle_arg_nopie,
++     "",           "disable PIE randomization"},
++    {"noaslr",     "QEMU_NOASLR",      false, handle_arg_noaslr,
++     "",           "disable ASLR randomization"},
++    {"wxorx",      "QEMU_WXORX",       false, handle_arg_wxorx,
++     "",           "enable W^X implementation"},
+     {NULL, NULL, false, NULL, NULL, NULL}
+ };
+ 
+diff -Naur qemu-2.7.0.orig/linux-user/mmap.c qemu-2.7.0/linux-user/mmap.c
+--- qemu-2.7.0.orig/linux-user/mmap.c	2016-09-02 17:34:22.000000000 +0200
++++ qemu-2.7.0/linux-user/mmap.c	2017-01-16 20:01:20.397107430 +0100
+@@ -24,7 +24,10 @@
+ #include "qemu-common.h"
+ #include "translate-all.h"
+ 
+-//#define DEBUG_MMAP
++int do_wxorx = 0;
++int do_mmap = 0;
++
++#define DEBUG_MMAP
+ 
+ static pthread_mutex_t mmap_mutex = PTHREAD_MUTEX_INITIALIZER;
+ static __thread int mmap_lock_count;
+@@ -66,11 +69,16 @@
+     int prot1, ret;
+ 
+ #ifdef DEBUG_MMAP
+-    printf("mprotect: start=0x" TARGET_ABI_FMT_lx
+-           "len=0x" TARGET_ABI_FMT_lx " prot=%c%c%c\n", start, len,
++    if (do_mmap == 1)
++    {
++        printf("mprotect: start=0x" TARGET_ABI_FMT_lx
++           "len=0x" TARGET_ABI_FMT_lx " prot=%c%c%c  extprot=%c%c\n", start, len,
+            prot & PROT_READ ? 'r' : '-',
+            prot & PROT_WRITE ? 'w' : '-',
+-           prot & PROT_EXEC ? 'x' : '-');
++           prot & PROT_EXEC ? 'x' : '-',
++           page_get_flags(start) & PAGE_WWRITE ? 'W' : '-',
++           page_get_flags(start) & PAGE_WEXEC ? 'X' : '-');
++    }
+ #endif
+ 
+     if ((start & ~TARGET_PAGE_MASK) != 0)
+@@ -79,10 +87,24 @@
+     end = start + len;
+     if (end < start)
+         return -EINVAL;
+-    prot &= PROT_READ | PROT_WRITE | PROT_EXEC;
++    if (do_wxorx == 0)
++    {
++        prot &= PROT_READ | PROT_WRITE | PROT_EXEC;
++    }
++    else {
++        prot &= PROT_READ | PROT_WRITE | PROT_EXEC | PAGE_WEXEC | PAGE_WWRITE;
++    }
+     if (len == 0)
+         return 0;
+ 
++    if (do_wxorx == 1)
++    {
++        if (((prot & PROT_EXEC) && (prot & PROT_WRITE)) || ((page_get_flags(start) & PAGE_WEXEC) && (prot & PAGE_WRITE)) || ((page_get_flags(start) & PAGE_WWRITE) && (prot & PROT_EXEC)))
++        {
++            return -EINVAL;
++        }
++    }
++
+     mmap_lock();
+     host_start = start & qemu_host_page_mask;
+     host_end = HOST_PAGE_ALIGN(end);
+@@ -121,6 +143,10 @@
+         if (ret != 0)
+             goto error;
+     }
++    if ((prot & PROT_WRITE) && (do_wxorx == 1))
++        prot |= PAGE_WWRITE;
++    else if ((prot & PROT_EXEC) && (do_wxorx == 1))
++        prot |= PAGE_WEXEC;
+     page_set_flags(start, start + len, prot | PAGE_VALID);
+     mmap_unlock();
+     return 0;
+@@ -365,6 +391,7 @@
+ 
+     mmap_lock();
+ #ifdef DEBUG_MMAP
++    if (do_mmap == 1)
+     {
+         printf("mmap: start=0x" TARGET_ABI_FMT_lx
+                " len=0x" TARGET_ABI_FMT_lx " prot=%c%c%c flags=",
+@@ -391,6 +418,12 @@
+     }
+ #endif
+ 
++    if ((do_wxorx == 1 ) && ((prot & PROT_EXEC) && (prot & PROT_WRITE)))
++    {
++        errno = EINVAL;
++        goto fail;
++    }
++
+     if (offset & ~TARGET_PAGE_MASK) {
+         errno = EINVAL;
+         goto fail;
+@@ -553,12 +586,19 @@
+         }
+     }
+  the_end1:
++    if ((prot & PROT_WRITE) && (do_wxorx == 1))
++        prot |= PAGE_WWRITE;
++    else if ((prot & PROT_EXEC) && (do_wxorx == 1))
++        prot |= PAGE_WEXEC;
+     page_set_flags(start, start + len, prot | PAGE_VALID);
+  the_end:
+ #ifdef DEBUG_MMAP
+-    printf("ret=0x" TARGET_ABI_FMT_lx "\n", start);
+-    page_dump(stdout);
+-    printf("\n");
++    if (do_mmap == 1)
++    {
++        printf("ret=0x" TARGET_ABI_FMT_lx "\n", start);
++        page_dump(stdout);
++        printf("\n");
++    }
+ #endif
+     tb_invalidate_phys_range(start, start + len);
+     mmap_unlock();
+@@ -615,9 +655,13 @@
+     int prot, ret;
+ 
+ #ifdef DEBUG_MMAP
+-    printf("munmap: start=0x" TARGET_ABI_FMT_lx " len=0x"
++    if (do_mmap)
++    {
++
++        printf("munmap: start=0x" TARGET_ABI_FMT_lx " len=0x"
+            TARGET_ABI_FMT_lx "\n",
+            start, len);
++    }
+ #endif
+     if (start & ~TARGET_PAGE_MASK)
+         return -EINVAL;
+diff -Naur qemu-2.7.0.orig/linux-user/qemu.h qemu-2.7.0/linux-user/qemu.h
+--- qemu-2.7.0.orig/linux-user/qemu.h	2016-09-02 17:34:22.000000000 +0200
++++ qemu-2.7.0/linux-user/qemu.h	2017-01-16 20:01:20.397107430 +0100
+@@ -354,6 +354,12 @@
+ 
+ #endif
+ 
++/*  global variables */
++extern int do_wxorx;
++extern int do_aslr;
++extern int do_pie;
++extern int do_mmap;
++
+ /* syscall.c */
+ int host_to_target_waitstatus(int status);
+ 
+diff -Naur qemu-2.7.0.orig/linux-user/syscall.c qemu-2.7.0/linux-user/syscall.c
+--- qemu-2.7.0.orig/linux-user/syscall.c	2016-09-02 17:34:22.000000000 +0200
++++ qemu-2.7.0/linux-user/syscall.c	2017-01-16 20:01:20.398107430 +0100
+@@ -1031,7 +1031,6 @@
+     mapped_addr = get_errno(target_mmap(brk_page, new_alloc_size,
+                                         PROT_READ|PROT_WRITE,
+                                         MAP_ANON|MAP_PRIVATE, 0, 0));
+-
+     if (mapped_addr == brk_page) {
+         /* Heap contents are initialized to zero, as for anonymous
+          * mapped pages.  Technically the new pages are already
+@@ -4588,8 +4587,27 @@
+         host_raddr = shmat(shmid, (void *)g2h(shmaddr), shmflg);
+     else {
+         abi_ulong mmap_start;
+-
+-        mmap_start = mmap_find_vma(0, shm_info.shm_segsz);
++        if (do_aslr == 0)
++        {
++          mmap_start = mmap_find_vma(0, shm_info.shm_segsz);
++        }
++        else
++        {
++          int attempts;
++          int newstart;
++          int fd = open("/dev/urandom", O_RDONLY);
++          read(fd, &newstart, sizeof(newstart));
++          close(fd);
++          srand(newstart);
++
++          for(attempts = 0; attempts < 10; attempts++)
++          {
++            newstart = rand() & 0xffffe000;
++            mmap_start = mmap_find_vma(newstart, shm_info.shm_segsz);
++            if(mmap_start > 0)
++              break;
++          }
++        }
+ 
+         if (mmap_start == -1) {
+             errno = ENOMEM;
+@@ -8829,10 +8847,39 @@
+                                         v5, v6));
+         }
+ #else
++    if (do_aslr == 0)
++    {
+         ret = get_errno(target_mmap(arg1, arg2, arg3,
+                                     target_to_host_bitmask(arg4, mmap_flags_tbl),
+                                     arg5,
+                                     arg6));
++    }
++    else
++  {
++    int attempts;
++    int newarg1;
++    if(arg1 == 0)
++    {
++      int fd = open("/dev/urandom", O_RDONLY);
++      read(fd, &newarg1, sizeof(newarg1));
++      close(fd);
++      srand(newarg1);
++    }
++
++    for(attempts = 0; attempts < 10; attempts++)
++    {
++      if((arg1 == 0) && (attempts < 9))
++        newarg1 = rand() & 0xfffff000;
++      else
++        newarg1 = arg1;
++            ret = get_errno(target_mmap(newarg1, arg2, arg3,
++                                    target_to_host_bitmask(arg4, mmap_flags_tbl),
++                                    arg5,
++                                    arg6));
++      if((ret > 0) || (ret < -TARGET_ENOTRECOVERABLE))
++        break;
++    }
++  }
+ #endif
+         break;
+ #endif
+@@ -8841,10 +8888,39 @@
+ #ifndef MMAP_SHIFT
+ #define MMAP_SHIFT 12
+ #endif
++    if (do_aslr == 0)
++    {
+         ret = get_errno(target_mmap(arg1, arg2, arg3,
+                                     target_to_host_bitmask(arg4, mmap_flags_tbl),
+                                     arg5,
+                                     arg6 << MMAP_SHIFT));
++    }
++    else
++	{
++		int attempts;
++		int newarg1;
++		if(arg1 == 0)
++		{
++			int fd = open("/dev/urandom", O_RDONLY);
++			read(fd, &newarg1, sizeof(newarg1));
++			close(fd);
++			srand(newarg1);
++		}
++
++		for(attempts = 0; attempts < 10; attempts++)
++		{
++			if((arg1 == 0) && (attempts < 9))
++				newarg1 = rand() & 0xfffff000;
++			else
++				newarg1 = arg1;
++	        	ret = get_errno(target_mmap(newarg1, arg2, arg3,
++        	        	                    target_to_host_bitmask(arg4, mmap_flags_tbl),
++                	        	            arg5,
++                        	        	    arg6 << MMAP_SHIFT));
++			if((ret > 0) || (ret < -TARGET_ENOTRECOVERABLE))
++				break;
++		}
++	}
+         break;
+ #endif
+     case TARGET_NR_munmap:

@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+
+{% block title %}Espace joueurs{% endblock %}
+
+{% block content %}
+
+<div id="content">
+
+<br><br>
+
+<h1>Bienvenue sur le site de la Team France</h1>
+<h2>Connectez-vous ci-dessous</h2><br>
+
+<form action="?" method="POST" onsubmit="login();return false;">
+	Nom d'utilisateur : <input type="text" id="username" value=""/>
+    Mot de passe : <input type="password" id="password" value=""/>
+	<input class="button" type="submit" value="Connexion" />
+</form>
+
+<br><br>
+
+<p id="stat"></p>
+
+</div>
+{% endblock %}

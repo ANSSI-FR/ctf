@@ -1,0 +1,12 @@
+{% extends 'master.html' %}
+
+{% block body %}
+{% for post in POSTS|reverse %}
+      <div class="blog-post">
+        <h2 class="blog-post-title">{{ post.title }}</h2>
+        <p class="blog-post-meta">{{ post.date }} par <a href="#">{{ post.author }}</a></p>
+        <p>{{ post.description|safe }}</p>
+        <a class="btn btn-sm btn-secondary btn-primary" href="{{ url_for('post', post_id=post.id) }}" role="btn">Lire</a>
+      </div><!-- /.blog-post -->
+{% endfor %}
+{% endblock %}
