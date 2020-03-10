@@ -20,6 +20,9 @@ Le tableau ci-dessous contient les épreuves publiées dans ce dépôt, classée
 | Pré-sélections      | Not so FAT                 | forensics    |  Facile            |            324 / 1241 |
 | Pré-sélections      | Petites notes              | forensics    |  Facile            |            307 / 1241 |
 | Pré-sélections      | Exfiltration               | forensics    |  Moyen             |             92 / 1241 |
+| Pré-sélections      | Rancongiciel (1)           | forensics    |  Facile            |            148 / 1241 |
+| Pré-sélections      | Rancongiciel (2)           | forensics    |  Moyen             |             71 / 1241 |
+| Pré-sélections      | Rancongiciel (3)           | forensics    |  Moyen             |             58 / 1241 |
 | Pré-sélections      | CryptoDIY                  | forensics    |  Difficile         |              8 / 1241 |
 | Pré-sélections      | Armory                     | pwn          |  Facile            |             85 / 1241 |
 | Pré-sélections      | Aarchibald                 | pwn          |  Facile            |            115 / 1241 |
